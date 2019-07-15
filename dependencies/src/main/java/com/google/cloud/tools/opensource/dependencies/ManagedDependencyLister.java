@@ -27,13 +27,13 @@ import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 /**
  * Demo retrieving list of managed dependencies from Maven coordinates.
  */
-public class ManagedDependencyLister {
+class ManagedDependencyLister {
 
   private static final RepositorySystem system = RepositoryUtility.newRepositorySystem();
 
   public static void main(String[] args) throws ArtifactDescriptorException {
     DefaultArtifact artifact =
-        new DefaultArtifact("com.google.cloud:cloud-oss-bom:pom:0.0.1-SNAPSHOT");
+        new DefaultArtifact("com.google.cloud:libraries-bom:pom:1.0.0");
 
     RepositorySystemSession session = RepositoryUtility.newSession(system);
 

@@ -16,6 +16,16 @@
 
 package com.google.cloud.tools.opensource.dashboard;
 
+import com.google.cloud.tools.opensource.dependencies.Artifacts;
+import com.google.cloud.tools.opensource.dependencies.Bom;
+import com.google.cloud.tools.opensource.dependencies.DependencyGraph;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.LinkedListMultimap;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
+import com.google.common.truth.Truth;
+import freemarker.template.Configuration;
+import freemarker.template.TemplateException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,15 +34,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import freemarker.template.Configuration;
-import freemarker.template.TemplateException;
 import nu.xom.Builder;
 import nu.xom.Document;
 import nu.xom.Element;
 import nu.xom.Nodes;
 import nu.xom.ParsingException;
-
 import org.eclipse.aether.RepositoryException;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -41,16 +47,11 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.google.cloud.tools.opensource.dependencies.Artifacts;
-import com.google.cloud.tools.opensource.dependencies.DependencyGraph;
-import com.google.common.io.MoreFiles;
-import com.google.common.io.RecursiveDeleteOption;
-import com.google.common.truth.Truth;
-
 
 public class DashboardUnavailableArtifactTest {
 
   private static Path outputDirectory;
+  private Bom bom = new Bom("test:test:1.2.4", null);
   private Builder builder = new Builder();
 
   @BeforeClass
@@ -60,6 +61,8 @@ public class DashboardUnavailableArtifactTest {
 
   @AfterClass
   public static void cleanUp() throws IOException {
+    // Mac's APFS fails with InsecureRecursiveDeleteException without ALLOW_INSECURE.
+    // Still safe as this test does not use symbolic links
     MoreFiles.deleteRecursively(outputDirectory, RecursiveDeleteOption.ALLOW_INSECURE);
   }
 
@@ -78,7 +81,13 @@ public class DashboardUnavailableArtifactTest {
     ArtifactCache cache = new ArtifactCache();
     cache.setInfoMap(map);
     List<ArtifactResults> artifactResults =
-        DashboardMain.generateReports(configuration, outputDirectory, cache);
+        DashboardMain.generateReports(
+            configuration,
+            outputDirectory,
+            cache,
+            ImmutableMap.of(),
+            LinkedListMultimap.create(),
+            bom);
 
     Assert.assertEquals(
         "The length of the ArtifactResults should match the length of artifacts",
@@ -112,16 +121,24 @@ public class DashboardUnavailableArtifactTest {
     Artifact invalidArtifact = new DefaultArtifact("io.grpc:nonexistent:jar:1.15.0");
     ArtifactResults errorArtifactResult = new ArtifactResults(invalidArtifact);
     errorArtifactResult.setExceptionMessage(
-        "Could not find artifact io.grpc:nonexistent:jar:1.15.0 in central (http://repo1.maven.org/maven2/)");
+        "Could not find artifact io.grpc:nonexistent:jar:1.15.0 in central"
+            + " (http://repo1.maven.org/maven2/)");
     List<ArtifactResults> table = new ArrayList<>();
     table.add(validArtifactResult);
     table.add(errorArtifactResult);
 
-    DashboardMain.generateDashboard(configuration, outputDirectory, table, null);
+    DashboardMain.generateDashboard(
+        configuration,
+        outputDirectory,
+        table,
+        null,
+        ImmutableMap.of(),
+        LinkedListMultimap.create(),
+        bom);
 
-    Path generatedDashboardHtml = outputDirectory.resolve("dashboard.html");
-    Assert.assertTrue(Files.isRegularFile(generatedDashboardHtml));
-    Document document = builder.build(generatedDashboardHtml.toFile());
+    Path generatedHtml = outputDirectory.resolve("artifact_details.html");
+    Assert.assertTrue(Files.isRegularFile(generatedHtml));
+    Document document = builder.build(generatedHtml.toFile());
     Assert.assertEquals("en-US", document.getRootElement().getAttribute("lang").getValue());
     Nodes tr = document.query("//tr");
 
@@ -132,15 +149,15 @@ public class DashboardUnavailableArtifactTest {
     Nodes tdForValidArtifact = tr.get(1).query("td");
     Assert.assertEquals(
         Artifacts.toCoordinates(validArtifact), tdForValidArtifact.get(0).getValue());
-    Element firstResult = (Element) (tdForValidArtifact.get(1));
+    Element firstResult = (Element) (tdForValidArtifact.get(2));
     Truth.assertThat(firstResult.getValue().trim()).isEqualTo("PASS");
-    Truth.assertThat(firstResult.getAttributeValue("class")).isEqualTo("PASS");
+    Truth.assertThat(firstResult.getAttributeValue("class")).isEqualTo("pass");
 
     Nodes tdForErrorArtifact = tr.get(2).query("td");
     Assert.assertEquals(
         Artifacts.toCoordinates(invalidArtifact), tdForErrorArtifact.get(0).getValue());
-    Element secondResult = (Element) (tdForErrorArtifact.get(1));
+    Element secondResult = (Element) (tdForErrorArtifact.get(2));
     Truth.assertThat(secondResult.getValue().trim()).isEqualTo("UNAVAILABLE");
-    Truth.assertThat(secondResult.getAttributeValue("class")).isEqualTo("UNAVAILABLE");
+    Truth.assertThat(secondResult.getAttributeValue("class")).isEqualTo("unavailable");
   }
 }

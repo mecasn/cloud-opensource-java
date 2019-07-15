@@ -16,6 +16,10 @@
 
 package com.google.cloud.tools.opensource.dependencies;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
+import com.google.common.base.CharMatcher;
+import com.google.common.collect.ImmutableList;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,6 +28,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Stack;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import org.eclipse.aether.RepositoryException;
 import org.eclipse.aether.RepositorySystem;
@@ -34,6 +39,7 @@ import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.collection.DependencyCollectionException;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 
@@ -42,171 +48,222 @@ import org.eclipse.aether.resolution.DependencyResolutionException;
  * Resolver</a> (formerly known as Eclipse Aether).
  */
 public class DependencyGraphBuilder {
-  
+
+  private static final Logger logger = Logger.getLogger(DependencyGraphBuilder.class.getName());
+
   private static final RepositorySystem system = RepositoryUtility.newRepositorySystem();
-  
+
+  private static final CharMatcher LOWER_ALPHA_NUMERIC =
+      CharMatcher.inRange('a', 'z').or(CharMatcher.inRange('0', '9'));
+
   static {
-    // os.detected.classifier system property used to select Netty deps
-    String OS = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
-    if ((OS.indexOf("mac") >= 0) || (OS.indexOf("darwin") >= 0)) {
-      System.setProperty("os.detected.classifier", "osx-x86_64");
-    } else if (OS.indexOf("win") >= 0) {
-      System.setProperty("os.detected.classifier", "windows-x86_64");
-    } else if (OS.indexOf("nux") >= 0) {
-      System.setProperty("os.detected.classifier", "linux-x86_64");
-    } else {
-      // Since we only load the dependency graph, not actually use the 
-      // dependency, it doesn't matter a great deal which one we pick.
-      System.setProperty("os.detected.classifier", "linux-x86_64");      
-    }
+    setDetectedOsSystemProperties();
   }
 
   // caching cuts time by about a factor of 4.
-  private static final Map<String, DependencyNode> cache = new HashMap<>();
+  private static final Map<String, DependencyNode> cacheWithProvidedScope = new HashMap<>();
+  private static final Map<String, DependencyNode> cacheWithoutProvidedScope = new HashMap<>();
+
+  private static void setDetectedOsSystemProperties() {
+    // System properties to select Netty dependencies through os-maven-plugin
+    // Definition of the properties: https://github.com/trustin/os-maven-plugin
+
+    String osDetectedName = osDetectedName();
+    System.setProperty("os.detected.name", osDetectedName);
+    String osDetectedArch = osDetectedArch();
+    System.setProperty("os.detected.arch", osDetectedArch);
+    System.setProperty("os.detected.classifier", osDetectedName + "-" + osDetectedArch);
+  }
+
+  private static String osDetectedName() {
+    String osNameNormalized =
+        LOWER_ALPHA_NUMERIC.retainFrom(System.getProperty("os.name").toLowerCase(Locale.ENGLISH));
+
+    if (osNameNormalized.startsWith("macosx") || osNameNormalized.startsWith("osx")) {
+      return "osx";
+    } else if (osNameNormalized.startsWith("windows")) {
+      return "windows";
+    }
+    // Since we only load the dependency graph, not actually use the
+    // dependency, it doesn't matter a great deal which one we pick.
+    return "linux";
+  }
+
+  private static String osDetectedArch() {
+    String osArchNormalized =
+        LOWER_ALPHA_NUMERIC.retainFrom(System.getProperty("os.arch").toLowerCase(Locale.ENGLISH));
+    switch (osArchNormalized) {
+      case "x8664":
+      case "amd64":
+      case "ia32e":
+      case "em64t":
+      case "x64":
+        return "x86_64";
+      default:
+        return "x86_32";
+    }
+  }
 
   private static DependencyNode resolveCompileTimeDependencies(Artifact rootDependencyArtifact)
       throws DependencyCollectionException, DependencyResolutionException {
-    
-    String key = Artifacts.toCoordinates(rootDependencyArtifact);
-    if (cache.containsKey(key)) {
-      return cache.get(key);
-    }
-    
-    RepositorySystemSession session = RepositoryUtility.newSession(system);
-
-    CollectRequest collectRequest = new CollectRequest();
-    Dependency dependency = new Dependency(rootDependencyArtifact, "compile");
-    collectRequest.setRoot(dependency);
-    collectRequest.addRepository(RepositoryUtility.CENTRAL);
-    DependencyNode node = system.collectDependencies(session, collectRequest).getRoot();
-
-    DependencyRequest dependencyRequest = new DependencyRequest();
-    dependencyRequest.setRoot(node);
-    // TODO might be able to speed up by using collectDependencies here instead
-    system.resolveDependencies(session, dependencyRequest);
-    cache.put(key, node);
-    
-    return node;
+    return resolveCompileTimeDependencies(rootDependencyArtifact, false);
   }
 
-  private static DependencyNode resolveCompileTimeDependencies(List<Artifact> dependencyArtifacts)
+  private static DependencyNode resolveCompileTimeDependencies(
+      Artifact rootDependencyArtifact, boolean includeProvidedScope)
       throws DependencyCollectionException, DependencyResolutionException {
+    return resolveCompileTimeDependencies(
+        ImmutableList.of(rootDependencyArtifact), includeProvidedScope);
+  }
+
+  private static DependencyNode resolveCompileTimeDependencies(
+      List<Artifact> dependencyArtifacts, boolean includeProvidedScope)
+      throws DependencyCollectionException, DependencyResolutionException {
+
+    Map<String, DependencyNode> cache =
+        includeProvidedScope ? cacheWithProvidedScope : cacheWithoutProvidedScope;
+    String cacheKey =
+        dependencyArtifacts.stream().map(Artifacts::toCoordinates).collect(Collectors.joining(","));
+    if (cache.containsKey(cacheKey)) {
+      return cache.get(cacheKey);
+    }
+
+    RepositorySystemSession session =
+        includeProvidedScope
+            ? RepositoryUtility.newSessionWithProvidedScope(system)
+            : RepositoryUtility.newSession(system);
+
     CollectRequest collectRequest = new CollectRequest();
-    List<Dependency> dependencyList =
+
+    ImmutableList<Dependency> dependencyList =
         dependencyArtifacts
             .stream()
             .map(artifact -> new Dependency(artifact, "compile"))
-            .collect(Collectors.toList());
-    collectRequest.setDependencies(dependencyList);
-    collectRequest.addRepository(RepositoryUtility.CENTRAL);
-
-    RepositorySystemSession session = RepositoryUtility.newSession(system);
+            .collect(toImmutableList());
+    if (dependencyList.size() == 1) {
+      // With setRoot, the result includes dependencies with `optional:true` or `provided`
+      collectRequest.setRoot(dependencyList.get(0));
+    } else {
+      collectRequest.setDependencies(dependencyList);
+    }
+    RepositoryUtility.addRepositoriesToRequest(collectRequest);
     CollectResult collectResult = system.collectDependencies(session, collectRequest);
-    // This root DependencyNode's artifact is set to null, as root dependency was null in request
     DependencyNode node = collectResult.getRoot();
+
     DependencyRequest dependencyRequest = new DependencyRequest();
+    dependencyRequest.setRoot(node);
     dependencyRequest.setCollectRequest(collectRequest);
 
+    // This might be able to speed up by using collectDependencies here instead
     system.resolveDependencies(session, dependencyRequest);
+
+    cache.put(cacheKey, node);
+
     return node;
   }
 
-  /**
-   * Returns the non-transitive compile time dependencies of an artifact.
-   */
-  public static List<Artifact> getDirectDependencies(Artifact artifact)
-      throws DependencyCollectionException, DependencyResolutionException {
-    
+  /** Returns the non-transitive compile time dependencies of an artifact. */
+  public static List<Artifact> getDirectDependencies(Artifact artifact) throws RepositoryException {
+
     List<Artifact> result = new ArrayList<>();
-    
+
     DependencyNode node = resolveCompileTimeDependencies(artifact);
     for (DependencyNode child : node.getChildren()) {
       result.add(child.getArtifact());
     }
     return result;
   }
-  
+
   /**
-   * Finds the full compile time, transitive dependency graph including duplicates
-   * and conflicting versions.
+   * Finds the full compile time, transitive dependency graph including duplicates, conflicting
+   * versions, and dependencies with 'provided' scope.
+   *
+   * @param artifacts Maven artifacts to retrieve their dependencies
+   * @return dependency graph representing the tree of Maven artifacts
+   * @throws RepositoryException when there is a problem in resolving or collecting dependency
    */
-  public static DependencyGraph getCompleteDependencies(Artifact artifact)
-      throws DependencyCollectionException, DependencyResolutionException {
-    
-    // root node
-    DependencyNode node = resolveCompileTimeDependencies(artifact);
-    DependencyGraph graph = new DependencyGraph();
-    levelOrder(node, graph, true);
-    
-    return graph;
-  }
-  
-  /**
-   * Finds the complete transitive dependency graph as seen by Maven.
-   * It does not include duplicates and conflicting versions. That is,
-   * this resolves conflicting versions by picking the first version
-   * seen. This is how Maven normally operates.
-   */
-  public static DependencyGraph getTransitiveDependencies(Artifact artifact)
-      throws DependencyCollectionException, DependencyResolutionException {
-    // root node
-    DependencyNode node = resolveCompileTimeDependencies(artifact);
-    DependencyGraph graph = new DependencyGraph();
-    levelOrder(node, graph);
-    return graph;
+  public static DependencyGraph getStaticLinkageCheckDependencyGraph(List<Artifact> artifacts)
+      throws RepositoryException {
+    DependencyNode node = resolveCompileTimeDependencies(artifacts, true);
+    return levelOrder(node, GraphTraversalOption.FULL_DEPENDENCY_WITH_PROVIDED);
   }
 
-  static DependencyGraph getTransitiveDependencies(List<Artifact> artifacts)
-      throws DependencyCollectionException, DependencyResolutionException {
-    // root node artifact is null and the node has dependencies as children
-    DependencyNode node = resolveCompileTimeDependencies(artifacts);
-    DependencyGraph graph = new DependencyGraph();
-    levelOrder(node, graph);
-    return graph;
+  /**
+   * Finds the full compile time, transitive dependency graph including duplicates and conflicting
+   * versions.
+   */
+  public static DependencyGraph getCompleteDependencies(Artifact artifact)
+      throws RepositoryException {
+
+    // root node
+    DependencyNode node = resolveCompileTimeDependencies(artifact);
+    return levelOrder(node, GraphTraversalOption.FULL_DEPENDENCY);
+  }
+
+  /**
+   * Finds the complete transitive dependency graph as seen by Maven. It does not include duplicates
+   * and conflicting versions. That is, this resolves conflicting versions by picking the first
+   * version seen. This is how Maven normally operates.
+   */
+  public static DependencyGraph getTransitiveDependencies(Artifact artifact)
+      throws RepositoryException {
+    // root node
+    DependencyNode node = resolveCompileTimeDependencies(artifact);
+    return levelOrder(node);
   }
 
   private static final class LevelOrderQueueItem {
     final DependencyNode dependencyNode;
     final Stack<DependencyNode> parentNodes;
 
-    LevelOrderQueueItem(DependencyNode dependencyNode,
-        Stack<DependencyNode> parentNodes) {
+    LevelOrderQueueItem(DependencyNode dependencyNode, Stack<DependencyNode> parentNodes) {
       this.dependencyNode = dependencyNode;
       this.parentNodes = parentNodes;
     }
   }
 
-  private static void levelOrder(DependencyNode node, DependencyGraph graph) {
-    try {
-      levelOrder(node, graph, false);
-    } catch (RepositoryException ex) {
-      throw new RuntimeException(
-          "There was problem in resolving dependencies even when it is not supposed to resolve dependency",
-          ex);
+  private static DependencyGraph levelOrder(DependencyNode node)
+      throws AggregatedRepositoryException {
+    return levelOrder(node, GraphTraversalOption.NONE);
+  }
+
+  private enum GraphTraversalOption {
+    NONE,
+    FULL_DEPENDENCY,
+    FULL_DEPENDENCY_WITH_PROVIDED;
+
+    private boolean resolveFullDependencies() {
+      return this == FULL_DEPENDENCY || this == FULL_DEPENDENCY_WITH_PROVIDED;
     }
   }
 
   /**
-   * Traverses dependency tree in level-order (breadth-first search) and stores {@link
-   * DependencyPath} instances corresponding to tree nodes to {@link DependencyGraph}. When
-   * resolveFullDependency flag is true, then it resolves the dependency of the artifact of the each
-   * node in the dependency tree; otherwise it just follows the given dependency tree starting with
-   * firstNode.
+   * Returns a dependency graph by traversing dependency tree in level-order (breadth-first search).
+   *
+   * <p>When {@code graphTraversalOption} is FULL_DEPENDENCY or FULL_DEPENDENCY_WITH_PROVIDED, then
+   * it resolves the dependency of the artifact of each node in the dependency tree; otherwise it
+   * just follows the given dependency tree starting with firstNode.
    *
    * @param firstNode node to start traversal
-   * @param graph graph to store {@link DependencyPath} instances
-   * @param resolveFullDependency flag to resolve dependency for each node in the tree. Useful for
-   *     building a complete tree of dependencies including <i>provided</i> scope
-   * @throws DependencyCollectionException when there is a problem in collecting dependency. This
-   *     happens only when resolveFullDependency is true.
-   * @throws DependencyResolutionException when there is a problem in resolving dependency. This
-   *     happens only when resolveFullDependency is true.
+   * @param graphTraversalOption option to recursively resolve the dependency to build complete
+   *     dependency tree, with or without dependencies of provided scope
+   * @throws AggregatedRepositoryException when there are one ore more problems due to {@link
+   *     DependencyCollectionException} or {@link DependencyResolutionException}. This happens only
+   *     when graphTraversalOption is FULL_DEPENDENCY or FULL_DEPENDENCY_WITH_PROVIDED.
    */
-  private static void levelOrder(
-      DependencyNode firstNode, DependencyGraph graph, boolean resolveFullDependency)
-      throws DependencyCollectionException, DependencyResolutionException {
+  private static DependencyGraph levelOrder(
+      DependencyNode firstNode, GraphTraversalOption graphTraversalOption)
+      throws AggregatedRepositoryException {
+
+    DependencyGraph graph = new DependencyGraph();
+
+    boolean resolveFullDependency = graphTraversalOption.resolveFullDependencies();
     Queue<LevelOrderQueueItem> queue = new ArrayDeque<>();
     queue.add(new LevelOrderQueueItem(firstNode, new Stack<>()));
+
+    // Records failures rather than throwing immediately.
+    List<ExceptionAndPath> resolutionFailures = new ArrayList<>();
+
     while (!queue.isEmpty()) {
       LevelOrderQueueItem item = queue.poll();
       DependencyNode dependencyNode = item.dependencyNode;
@@ -218,29 +275,78 @@ public class DependencyGraphBuilder {
         // set to null
         forPath.add(dependencyNode.getArtifact());
         if (resolveFullDependency && parentNodes.contains(dependencyNode)) {
-          // TODO: change to logger
-          System.err.println("Infinite recursion resolving " + dependencyNode);
-          System.err.println("Likely cycle in " + parentNodes);
-          System.err.println("Child " + dependencyNode);
+          logger.severe(
+              "Infinite recursion resolving "
+                  + dependencyNode
+                  + ". Likely cycle in "
+                  + parentNodes);
           continue;
         }
         parentNodes.push(dependencyNode);
         graph.addPath(forPath);
 
         if (resolveFullDependency && !"system".equals(dependencyNode.getDependency().getScope())) {
+          Artifact dependencyNodeArtifact = dependencyNode.getArtifact();
           try {
-            dependencyNode = resolveCompileTimeDependencies(dependencyNode.getArtifact());
-          } catch (DependencyResolutionException ex) {
-            // TODO: change to logger
-            System.err.println("Error resolving " + dependencyNode + " under " + parentNodes);
-            System.err.println(ex.getMessage());
-            throw ex;
+            boolean includeProvidedScope =
+                graphTraversalOption == GraphTraversalOption.FULL_DEPENDENCY_WITH_PROVIDED;
+            dependencyNode =
+                resolveCompileTimeDependencies(dependencyNodeArtifact, includeProvidedScope);
+          } catch (DependencyResolutionException resolutionException) {
+            // A dependency may be unavailable. For example, com.google.guava:guava-gwt:jar:20.0
+            // has a transitive dependency to org.eclipse.jdt.core.compiler:ecj:jar:4.4RC4 (not
+            // found in Maven central)
+            for (ArtifactResult artifactResult :
+                resolutionException.getResult().getArtifactResults()) {
+              if (artifactResult.getExceptions().isEmpty()) {
+                continue;
+              }
+              DependencyNode failedDependencyNode = artifactResult.getRequest().getDependencyNode();
+              ExceptionAndPath failure =
+                  ExceptionAndPath.create(parentNodes, failedDependencyNode, resolutionException);
+              if (isUnacceptableResolutionException(failure)) {
+                resolutionFailures.add(failure);
+              }
+            }
+          } catch (DependencyCollectionException collectionException) {
+            DependencyNode failedDependencyNode = collectionException.getResult().getRoot();
+            ExceptionAndPath failure =
+                ExceptionAndPath.create(parentNodes, failedDependencyNode, collectionException);
+            if (isUnacceptableResolutionException(failure)) {
+              resolutionFailures.add(failure);
+            }
           }
         }
       }
       for (DependencyNode child : dependencyNode.getChildren()) {
-        queue.add(new LevelOrderQueueItem(child, (Stack<DependencyNode>) parentNodes.clone()));
+        @SuppressWarnings("unchecked")
+        Stack<DependencyNode> clone = (Stack<DependencyNode>) parentNodes.clone();
+        queue.add(new LevelOrderQueueItem(child, clone));
       }
     }
+
+    if (!resolutionFailures.isEmpty()) {
+      throw new AggregatedRepositoryException(resolutionFailures);
+    }
+
+    return graph;
+  }
+
+  /**
+   * Returns true if {@code exceptionAndPath.getPath} does not contain {@code optional} dependency
+   * and the path does not contain {@code scope:provided} dependency.
+   */
+  private static boolean isUnacceptableResolutionException(ExceptionAndPath exceptionAndPath) {
+    ImmutableList<DependencyNode> dependencyNodes = exceptionAndPath.getPath();
+    boolean hasOptionalParent =
+        dependencyNodes.stream().anyMatch(node -> node.getDependency().isOptional());
+    if (!hasOptionalParent) {
+      return true;
+    }
+    boolean hasProvidedParent =
+        dependencyNodes
+            .stream()
+            .anyMatch(node -> "provided".equals(node.getDependency().getScope()));
+    return !hasProvidedParent;
   }
 }

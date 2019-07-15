@@ -4,9 +4,9 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>com.google.cloud.tools.opensource</groupId>
-    <artifactId>cloud-tools-opensource-parent</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <groupId>com.google.cloud.tools</groupId>
+    <artifactId>dependencies-parent</artifactId>
+    <version>0.2.4-SNAPSHOT</version>
   </parent>
   <artifactId>dashboard</artifactId>
 
@@ -42,20 +42,14 @@
     </dependency>
     <dependency>
       <groupId>${project.groupId}</groupId>
-      <artifactId>dependency-lister</artifactId>
+      <artifactId>dependencies</artifactId>
       <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.google.cloud</groupId>
-      <artifactId>cloud-oss-bom</artifactId>
-      <version>0.67.0-SNAPSHOT</version>
-      <type>pom</type>
     </dependency>
 
     <dependency>
-      <groupId>com.io7m.xom</groupId>
+      <groupId>xom</groupId>
       <artifactId>xom</artifactId>
-      <version>1.2.10</version>
+      <version>1.3.2</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -67,7 +61,6 @@
       <groupId>com.google.truth</groupId>
       <artifactId>truth</artifactId>
       <scope>test</scope>
-      <version>0.42</version>
     </dependency>
   </dependencies>
 
@@ -78,7 +71,6 @@
         <artifactId>exec-maven-plugin</artifactId>
         <configuration>
           <skip>false</skip>
-          <exec>java</exec>
           <mainClass>com.google.cloud.tools.opensource.dashboard.DashboardMain</mainClass>
         </configuration>
       </plugin>

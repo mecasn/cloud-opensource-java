@@ -4,20 +4,45 @@
                http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.google.cloud.tools.opensource</groupId>
-  <artifactId>cloud-tools-opensource-parent</artifactId>
+  <groupId>com.google.cloud.tools</groupId>
+  <artifactId>dependencies-parent</artifactId>
   <packaging>pom</packaging>
-  <version>1.0-SNAPSHOT</version>
+  <version>0.2.4-SNAPSHOT</version>
+
   <name>Cloud Tools Open Source Code Hygiene Tooling</name>
   <url>https://github.com/GoogleCloudPlatform/cloud-opensource-java/</url>
   <organization>
     <name>Google LLC.</name>
     <url>https://www.google.com</url>
   </organization>
+  <description>Parent pom for tools and libraries that check Maven
+  artifacts for assorted problems</description>
+  <inceptionYear>2018</inceptionYear>
+  <developers>
+    <developer>
+      <name>Elliotte Rusty Harold</name>
+    </developer>
+    <developer>
+      <name>Tomo Suzuki</name>
+    </developer>
+  </developers>
+
+  <!-- Environment Settings -->
+  <issueManagement>
+    <url>https://github.com/GoogleCloudPlatform/cloud-opensource-java/issues</url>
+  </issueManagement>
+  <scm>
+    <connection>scm:git:https://github.com/GoogleCloudPlatform/cloud-opensource-java.git</connection>
+    <developerConnection>scm:git:https://github.com/GoogleCloudPlatform/cloud-opensource-java.git</developerConnection>
+    <url>https://github.com/GoogleCloudPlatform/cloud-opensource-java</url>
+  </scm>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <guavaVersion>26.0-jre</guavaVersion>
+    <guava.version>28.0-jre</guava.version>
+    <resolver.version>1.4.0</resolver.version>
+    <maven.version>3.6.0</maven.version>
+    <truth.version>1.0</truth.version>
   </properties>
 
   <licenses>
@@ -31,6 +56,8 @@
     <module>boms</module>
     <module>dependencies</module>
     <module>dashboard</module>
+    <module>enforcer-rules</module>
+    <module>linkage-monitor</module>
   </modules>
 
   <dependencyManagement>
@@ -38,7 +65,44 @@
       <dependency>
         <groupId>com.google.guava</groupId>
         <artifactId>guava</artifactId>
-        <version>${guavaVersion}</version>
+        <version>${guava.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-core</artifactId>
+        <version>${maven.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-resolver-provider</artifactId>
+        <version>${maven.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.resolver</groupId>
+        <artifactId>maven-resolver-api</artifactId>
+        <version>${resolver.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.resolver</groupId>
+        <artifactId>maven-resolver-transport-http</artifactId>
+        <version>${resolver.version}</version>
+        <exclusions>
+          <exclusion>
+            <!-- To avoid conflict with commons-logging-1.2.jar in linkage-monitor's shading -->
+            <groupId>org.slf4j</groupId>
+            <artifactId>jcl-over-slf4j</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.resolver</groupId>
+        <artifactId>maven-resolver-transport-file</artifactId>
+        <version>${resolver.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.maven.resolver</groupId>
+        <artifactId>maven-resolver-connector-basic</artifactId>
+        <version>${resolver.version}</version>
       </dependency>
 
       <dependency>
@@ -48,9 +112,27 @@
         <scope>test</scope>
       </dependency>
       <dependency>
+        <groupId>com.google.truth</groupId>
+        <artifactId>truth</artifactId>
+        <version>${truth.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.google.truth.extensions</groupId>
+        <artifactId>truth-java8-extension</artifactId>
+        <version>${truth.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
         <groupId>com.google.guava</groupId>
         <artifactId>guava-testlib</artifactId>
-        <version>${guavaVersion}</version>
+        <version>${guava.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <version>2.24.5</version>
         <scope>test</scope>
       </dependency>
     </dependencies>
@@ -69,8 +151,80 @@
             <mainClass>none</mainClass>
           </configuration>
         </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>2.22.1</version>
+          <configuration>
+            <!-- To avoid ForkedBooter loading issue -->
+            <useSystemClassLoader>false</useSystemClassLoader>
+            <argLine>-Xms128m -Xmx1024m</argLine>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>com.mycila</groupId>
+          <artifactId>license-maven-plugin</artifactId>
+          <version>3.0</version>
+          <configuration>
+            <header>com/mycila/maven/plugin/license/templates/APACHE-2.txt</header>
+            <skipExistingHeaders>true</skipExistingHeaders>
+            <includes>
+              <include>**/*.java</include>
+            </includes>
+          </configuration>
+          <executions>
+            <execution>
+              <goals>
+                <goal>check</goal>
+              </goals>
+              <phase>validate</phase>
+            </execution>
+          </executions>
+        </plugin>
       </plugins>
     </pluginManagement>
+    <plugins>
+      <plugin>
+        <groupId>com.mycila</groupId>
+        <artifactId>license-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.0.0</version>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.0.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 
 </project>

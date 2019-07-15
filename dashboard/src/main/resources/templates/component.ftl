@@ -1,13 +1,20 @@
+<!DOCTYPE html>
 <html lang="en-US">
+  <#include "macros.ftl">
+  <#assign groupId = artifact.getGroupId()>
+  <#assign artifactId = artifact.getArtifactId()>
+  <#assign version = artifact.getVersion()>
   <head>
-    <title>Google Cloud Platform Dependency Analysis Report for ${groupId}:${artifactId}:${version}</title>
-    <link rel="stylesheet" type="text/css" href="dashboard.css" />
+    <meta charset="utf-8" />
+    <title>Google Cloud Platform Dependency Analysis Report for ${groupId}:${artifactId}:${version}
+    </title>
+    <link rel="stylesheet" href="dashboard.css" />
+    <script src="dashboard.js"></script>
   </head>
   <body>
     <h1>Dependency Analysis of ${groupId}:${artifactId}:${version}</h1>
-    
-    
-    <h2>Global Upper Bounds Check</h2>
+    <p class="bom-coordinates">BOM: ${coordinates?html}</p>
+    <h2 id="global-upper-bounds">Global Upper Bounds Check</h2>
     
     <p>For each transitive dependency the library pulls in, the highest version 
        found anywhere in the union of the BOM's dependency trees is picked.</p>
@@ -20,24 +27,47 @@
     
       <ul>
         <#list globalUpperBoundFailures as lower, upper>
-          <li>Upgrade ${lower} to ${upper}:
-          
-          <p>Add this dependency element to the pom.xml for ${groupId}:${artifactId}:${version}:</p>
-          
-<pre class="suggested-dependency-mediation"><code>&lt;dependency>
-  &lt;groupId>${upper.getGroupId()}&lt;/groupId>
-  &lt;artifactId>${upper.getArtifactId()}&lt;/artifactId>
-  &lt;version>${upper.getVersion()}&lt;/version>
+          <#if lower.getGroupId() == groupId && lower.getArtifactId() == artifactId
+              && lower.getVersion() == version ><#-- Not checking 'file' attribute of Artifact -->
+            <#-- When this is upgrading a BOM member -->
+            <li class="global-upper-bound-bom-upgrade">
+              Upgrade ${lower} in the BOM to version "${upper.getVersion()}":
+
+              <p>Update the version of managed dependency element
+                ${groupId}:${artifactId} in the BOM:</p>
+
+              <pre class="suggested-dependency-mediation"><code>&lt;dependencyManagement>
+  &lt;dependencies>
+    ...
+    &lt;dependency>
+      &lt;groupId>${upper.getGroupId()}&lt;/groupId>
+      &lt;artifactId>${upper.getArtifactId()}&lt;/artifactId>
+      &lt;version>${upper.getVersion()}&lt;/version>
+    &lt;/dependency></code></pre>
+
+            </li>
+          <#else >
+            <li class="global-upper-bound-dependency-upgrade">
+              Upgrade ${lower} to version "${upper.getVersion()}":
+
+              <p>Add this dependency element to the pom.xml for ${groupId}:${artifactId}:${version}:
+              </p>
+
+              <pre class="suggested-dependency-mediation"><code>&lt;dependency>
+&lt;groupId>${upper.getGroupId()}&lt;/groupId>
+&lt;artifactId>${upper.getArtifactId()}&lt;/artifactId>
+&lt;version>${upper.getVersion()}&lt;/version>
 &lt;/dependency></code></pre>
-          
-          </li>
+
+              <p>If the pom.xml for ${groupId}:${artifactId}:${version} already includes this
+                dependency, update the version of the existing <code>dependency</code> element.
+                Otherwise add a new <code>dependency</code> element to the
+                <code>dependencyManagement</code> section.</p>
+            </li>
+          </#if>
         </#list>
       </ul>
-      
-      <p>If the pom.xml for ${groupId}:${artifactId}:${version} already includes this dependency,
-        update the version of the existing <code>dependency</code> element. Otherwise add a new 
-        <code>dependency</code> element to the <code>dependencyManagement</code> section.</p>
-      
+
     <#else>
       <h3 style="color: green">
         ${groupId}:${artifactId}:${version} selects the highest version of all dependencies.
@@ -45,7 +75,7 @@
     </#if>   
     
     
-    <h2>Local Upper Bounds Check</h2>
+    <h2 id="upper-bounds">Local Upper Bounds Check</h2>
     
     
     <p>For each transitive dependency the library pulls in, the highest version 
@@ -60,7 +90,7 @@
       <ul>
         <#list upperBoundFailures as lower, upper>
           <li>Upgrade ${lower} to ${upper}:
-          
+
           <p>Add this dependency element to the pom.xml for ${groupId}:${artifactId}:${version}:</p>
           
 <pre class="suggested-dependency-mediation"><code>&lt;dependency>
@@ -72,18 +102,14 @@
           </li>
         </#list>
       </ul>
-      
-      <p>If the pom.xml already includes a dependency on ${groupId}:${artifactId}, update the version
-         on the existing <code>dependency</code> element. Otherwise add these <code>dependency</code>
-         elements to the <code>dependencyManagement</code> section.</p>
-      
+
     <#else>
       <h3 style="color: green">
         ${groupId}:${artifactId}:${version} selects the highest version of all dependencies.
       </h3>
     </#if>
         
-    <h2>Dependency Convergence</h2>
+    <h2 id="dependency-convergence">Dependency Convergence</h2>
     
     <p>There is exactly one version of each dependency in the library's transitive dependency tree.
        That is, two artifacts with the same group ID and artifact ID but different versions
@@ -109,10 +135,22 @@
       <h3 style="color: green">${groupId}:${artifactId}:${version} Converges</h3>
     </#if>
 
+
+    <h2 id="linkage-errors">Linkage Check</h2>
+
+    <p id="linkage-errors-total">${totalLinkageErrorCount} linkage error(s)</p>
+    <#list symbolProblems as jar, problemsToClasses>
+      <@formatJarLinkageReport jar problemsToClasses jarToDependencyPaths {} />
+    </#list>
+
     <h2>Dependencies</h2>
-    <pre class="dependency-tree">${dependencyTree}</pre>
-    
-     <hr />
-     <p id='updated'>Last generated at ${lastUpdated}</p>
+
+    <#if dependencyRootNode?? >
+      <@formatDependencyNode dependencyRootNode dependencyRootNode />
+    <#else>
+      <p>Dependency information is unavailable</p>
+    </#if>
+    <hr />
+    <p id='updated'>Last generated at ${lastUpdated}</p>
   </body>
 </html>

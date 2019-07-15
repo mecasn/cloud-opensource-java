@@ -1,5 +1,7 @@
-To run this manually
+To generate the dashboard from the root directory run:
 
 ```
-mvn exec:java
+$ mvn clean install
+$ cd dashboard
+$ mvn exec:java -Dexec.arguments="-f ../boms/cloud-oss-bom/pom.xml"
 ```

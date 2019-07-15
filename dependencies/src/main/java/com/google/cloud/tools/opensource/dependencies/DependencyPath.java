@@ -80,7 +80,7 @@ public final class DependencyPath {
         && artifact1.getVersion().equals(artifact2.getVersion());
   }
 
-  int size() {
+  public int size() {
     return path.size();
   }
 
@@ -93,7 +93,7 @@ public final class DependencyPath {
   }
 
   // TODO think about index out of bounds
-  Artifact get(int i) {
+  public Artifact get(int i) {
     return path.get(i);
   }
 

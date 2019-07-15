@@ -17,60 +17,22 @@
 package com.google.cloud.tools.opensource.dependencies;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.ListMultimap;
 import java.util.Collection;
 import java.util.List;
-import org.eclipse.aether.RepositoryException;
 import org.eclipse.aether.artifact.Artifact;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.DependencyCollectionException;
-import org.eclipse.aether.resolution.DependencyResolutionException;
 
-/**
- * Formats and prints artifact dependency tree represented by list of {@link DependencyPath}
- */
+/** Formats Maven artifact dependency tree. */
 public class DependencyTreeFormatter {
-
-  public static void main(String[] args) {
-    if (args.length < 1) {
-      System.err.println("Maven coordinate not provided. E.g., 'io.grpc:grpc-auth:1.15.0'");
-      return;
-    }
-    for (String coordinate : args) {
-      try {
-        printDependencyTree(coordinate);
-      } catch (RepositoryException e) {
-        System.err.println(coordinate + " : Failed to retrieve dependency information:"
-            + e.getMessage());
-      }
-    }
-  }
-
   /**
-   * Prints dependencies for the coordinate of an artifact
-   *
-   * @param coordinate Maven coordinate of an artifact to print its dependencies
-   * @throws RepositoryException when dependencies cannot be collected or resolved
-   */
-  private static void printDependencyTree(String coordinate)
-      throws DependencyCollectionException, DependencyResolutionException {
-    DefaultArtifact rootArtifact = new DefaultArtifact(coordinate);
-    DependencyGraph dependencyGraph =
-        DependencyGraphBuilder.getCompleteDependencies(rootArtifact);
-    System.out.println("Dependencies for " + coordinate);
-    System.out.println(formatDependencyPaths(dependencyGraph.list()));
-  }
-
-  /**
-   * Prints dependencies expressed in dependency paths in tree in similar way to mvn
-   * dependency:tree.
+   * Formats dependencies as a tree in a similar way to {@code mvn dependency:tree}.
    *
    * @param dependencyPaths dependency paths from @{@link
    *     DependencyGraphBuilder#getCompleteDependencies(Artifact)}. Each element must have its
    *     parent in the list, except the ones at the root.
    */
-  public static String formatDependencyPaths(List<DependencyPath> dependencyPaths) {
+  static String formatDependencyPaths(List<DependencyPath> dependencyPaths) {
     StringBuilder stringBuilder = new StringBuilder();
     // While Maven dependencies are resolved in level-order, printing text representing a tree
     // requires traversing the items in pre-order
@@ -98,19 +60,23 @@ public class DependencyTreeFormatter {
   }
 
   /**
-   * Builds ListMultiMap that represents a Maven dependency tree of parent-children relationship.
-   * The root node is represented as an empty {@link DependencyPath} and its children are
-   * the values for the root node.
+   * Builds ListMultimap that represents a Maven dependency tree of parent-children relationship.
+   * Each node in the tree has a corresponding key in the ListMultimap. The value associated with
+   * that key is a list of the children of the node. The root node is available at the first
+   * element in {@code listMultimap.values()}.
    *
    * @param dependencyPaths dependency path instances without assuming any order
-   * @return ListMultiMap representing a Maven dependency tree
+   * @return ListMultimap representing a Maven dependency tree of parent-children relationship. Each
+   *     node in the tree has a corresponding key in the ListMultimap and the children of the node
+   *     are the values for the key in the map. The {@link DependencyPath} representing the root
+   *     Maven artifact is available at the first element in {@code listMultimap.values()}.
    */
-  private static ListMultimap<DependencyPath, DependencyPath> buildDependencyPathTree(
+  public static ListMultimap<DependencyPath, DependencyPath> buildDependencyPathTree(
       Collection<DependencyPath> dependencyPaths) {
-    ListMultimap<DependencyPath, DependencyPath> tree = ArrayListMultimap.create();
+    // LinkedListMultimap preserves insertion order for values
+    ListMultimap<DependencyPath, DependencyPath> tree = LinkedListMultimap.create();
     for (DependencyPath dependencyPath : dependencyPaths) {
       List<Artifact> artifactPath = dependencyPath.getPath();
-      // empty list if the node is at root
       List<Artifact> parentArtifactPath = artifactPath.subList(0, artifactPath.size() - 1);
       DependencyPath parentDependencyPath = new DependencyPath();
       parentArtifactPath.forEach(
